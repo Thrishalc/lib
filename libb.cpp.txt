@@ -1,0 +1,679 @@
+
+#include <iostream>
+#include <vector>
+#include <memory>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <iomanip>
+#include <ctime>
+#include <limits>
+
+using namespace std;
+
+// ==========================================
+// BASE CLASS: MediaItem
+// ==========================================
+
+class MediaItem {
+protected:
+    int id;
+    string title;
+    string publisher;
+    bool isCheckedOut;
+    string borrower;
+    time_t checkoutDate;
+    int loanDays;
+
+public:
+    MediaItem(int id, string title, string publisher)
+        : id(id), title(title), publisher(publisher),
+          isCheckedOut(false), borrower(""),
+          checkoutDate(0), loanDays(14) {}
+
+    virtual ~MediaItem() = default;
+
+    int getId() const {
+        return id;
+    }
+
+    string getTitle() const {
+        return title;
+    }
+
+    bool getStatus() const {
+        return isCheckedOut;
+    }
+
+    string getBorrower() const {
+        return borrower;
+    }
+
+    // Runtime polymorphism
+    virtual string getType() const = 0;
+
+    virtual double getFineRate() const = 0;
+
+    virtual void display() const {
+        cout << "\nID: " << id
+             << "\nTitle: " << title
+             << "\nPublisher: " << publisher
+             << "\nType: " << getType()
+             << "\nStatus: "
+             << (isCheckedOut ? "Checked Out" : "Available");
+
+        if (isCheckedOut) {
+            cout << "\nBorrower: " << borrower;
+        }
+
+        cout << endl;
+    }
+
+    // Checkout operation
+    bool checkout(const string& member) {
+        if (isCheckedOut) {
+            cout << "\nItem is already checked out!\n";
+            return false;
+        }
+
+        if (member.empty()) {
+            cout << "\nInvalid member name!\n";
+            return false;
+        }
+
+        isCheckedOut = true;
+        borrower = member;
+        checkoutDate = time(nullptr);
+
+        cout << "\nItem checked out successfully!\n";
+        return true;
+    }
+
+    // Calculate overdue fine
+    double calculateFine() const {
+        if (!isCheckedOut || checkoutDate == 0) {
+            return 0.0;
+        }
+
+        time_t currentDate = time(nullptr);
+
+        double seconds =
+            difftime(currentDate, checkoutDate);
+
+        int daysPassed =
+            static_cast<int>(seconds / 86400);
+
+        int overdueDays = daysPassed - loanDays;
+
+        if (overdueDays > 0) {
+            return overdueDays * getFineRate();
+        }
+
+        return 0.0;
+    }
+
+    // Return operation
+    bool returnItem() {
+        if (!isCheckedOut) {
+            cout << "\nItem is not checked out!\n";
+            return false;
+        }
+
+        double fine = calculateFine();
+
+        cout << "\nReturn successful!";
+        cout << "\nBorrower: " << borrower;
+        cout << fixed << setprecision(2);
+        cout << "\nOverdue Fine: Rs. " << fine << endl;
+
+        isCheckedOut = false;
+        borrower = "";
+        checkoutDate = 0;
+
+        return true;
+    }
+
+    // Save common data
+    virtual string serialize() const = 0;
+
+    // Restore common checkout information
+    void restoreCheckout(
+        bool status,
+        string member,
+        time_t date
+    ) {
+        isCheckedOut = status;
+        borrower = member;
+        checkoutDate = date;
+    }
+};
+
+// ==========================================
+// DERIVED CLASS: Book
+// ==========================================
+
+class Book : public MediaItem {
+private:
+    string author;
+    string isbn;
+
+public:
+    Book(int id, string title, string publisher,
+         string author, string isbn)
+        : MediaItem(id, title, publisher),
+          author(author), isbn(isbn) {}
+
+    string getType() const override {
+        return "Book";
+    }
+
+    double getFineRate() const override {
+        return 2.0;
+    }
+
+    void display() const override {
+        MediaItem::display();
+
+        cout << "Author: " << author
+             << "\nISBN: " << isbn << endl;
+    }
+
+    string serialize() const override {
+        ostringstream out;
+
+        out << "BOOK|"
+            << id << "|"
+            << title << "|"
+            << publisher << "|"
+            << author << "|"
+            << isbn << "|"
+            << isCheckedOut << "|"
+            << borrower << "|"
+            << static_cast<long long>(checkoutDate);
+
+        return out.str();
+    }
+};
+
+// ==========================================
+// DERIVED CLASS: Journal
+// ==========================================
+
+class Journal : public MediaItem {
+private:
+    int volume;
+    int issueNumber;
+
+public:
+    Journal(int id, string title, string publisher,
+            int volume, int issueNumber)
+        : MediaItem(id, title, publisher),
+          volume(volume), issueNumber(issueNumber) {}
+
+    string getType() const override {
+        return "Journal";
+    }
+
+    double getFineRate() const override {
+        return 5.0;
+    }
+
+    void display() const override {
+        MediaItem::display();
+
+        cout << "Volume: " << volume
+             << "\nIssue Number: " << issueNumber
+             << endl;
+    }
+
+    string serialize() const override {
+        ostringstream out;
+
+        out << "JOURNAL|"
+            << id << "|"
+            << title << "|"
+            << publisher << "|"
+            << volume << "|"
+            << issueNumber << "|"
+            << isCheckedOut << "|"
+            << borrower << "|"
+            << static_cast<long long>(checkoutDate);
+
+        return out.str();
+    }
+};
+
+// ==========================================
+// LIBRARY MANAGEMENT CLASS
+// ==========================================
+
+class Library {
+private:
+    vector<unique_ptr<MediaItem>> catalog;
+
+    const string filename = "library.txt";
+
+    // Find item by ID
+    MediaItem* findItem(int id) {
+        for (auto& item : catalog) {
+            if (item->getId() == id) {
+                return item.get();
+            }
+        }
+
+        return nullptr;
+    }
+
+public:
+
+    // Add Book
+    void addBook() {
+        int id;
+        string title, publisher, author, isbn;
+
+        cout << "\nEnter Book ID: ";
+        cin >> id;
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+        if (findItem(id)) {
+            cout << "\nID already exists!\n";
+            return;
+        }
+
+        cout << "Enter Title: ";
+        getline(cin, title);
+
+        cout << "Enter Publisher: ";
+        getline(cin, publisher);
+
+        cout << "Enter Author: ";
+        getline(cin, author);
+
+        cout << "Enter ISBN: ";
+        getline(cin, isbn);
+
+        catalog.push_back(
+            make_unique<Book>(
+                id, title, publisher, author, isbn
+            )
+        );
+
+        saveToFile();
+
+        cout << "\nBook added successfully!\n";
+    }
+
+    // Add Journal
+    void addJournal() {
+        int id, volume, issue;
+        string title, publisher;
+
+        cout << "\nEnter Journal ID: ";
+        cin >> id;
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+        if (findItem(id)) {
+            cout << "\nID already exists!\n";
+            return;
+        }
+
+        cout << "Enter Title: ";
+        getline(cin, title);
+
+        cout << "Enter Publisher: ";
+        getline(cin, publisher);
+
+        cout << "Enter Volume: ";
+        cin >> volume;
+
+        cout << "Enter Issue Number: ";
+        cin >> issue;
+
+        if (volume <= 0 || issue <= 0) {
+            cout << "\nInvalid volume or issue number!\n";
+            return;
+        }
+
+        catalog.push_back(
+            make_unique<Journal>(
+                id, title, publisher, volume, issue
+            )
+        );
+
+        saveToFile();
+
+        cout << "\nJournal added successfully!\n";
+    }
+
+    // Display all media
+    void displayAll() const {
+        if (catalog.empty()) {
+            cout << "\nLibrary catalog is empty!\n";
+            return;
+        }
+
+        cout << "\n========== LIBRARY CATALOG ==========\n";
+
+        for (const auto& item : catalog) {
+            item->display();
+            cout << "----------------------------------\n";
+        }
+    }
+
+    // Search media
+    void searchItem() {
+        int id;
+
+        cout << "\nEnter Item ID: ";
+        cin >> id;
+
+        MediaItem* item = findItem(id);
+
+        if (item) {
+            item->display();
+        } else {
+            cout << "\nItem not found!\n";
+        }
+    }
+
+    // Checkout
+    void checkoutItem() {
+        int id;
+        string member;
+
+        cout << "\nEnter Item ID: ";
+        cin >> id;
+
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+        MediaItem* item = findItem(id);
+
+        if (!item) {
+            cout << "\nItem not found!\n";
+            return;
+        }
+
+        cout << "Enter Member Name: ";
+        getline(cin, member);
+
+        if (item->checkout(member)) {
+            saveToFile();
+        }
+    }
+
+    // Return
+    void returnItem() {
+        int id;
+
+        cout << "\nEnter Item ID: ";
+        cin >> id;
+
+        MediaItem* item = findItem(id);
+
+        if (!item) {
+            cout << "\nItem not found!\n";
+            return;
+        }
+
+        if (item->returnItem()) {
+            saveToFile();
+        }
+    }
+
+    // Display fine
+    void showFine() {
+        int id;
+
+        cout << "\nEnter Item ID: ";
+        cin >> id;
+
+        MediaItem* item = findItem(id);
+
+        if (!item) {
+            cout << "\nItem not found!\n";
+            return;
+        }
+
+        if (!item->getStatus()) {
+            cout << "\nItem is not checked out.\n";
+            return;
+        }
+
+        cout << fixed << setprecision(2);
+
+        cout << "\nCurrent Overdue Fine: Rs. "
+             << item->calculateFine() << endl;
+    }
+
+    // Save catalog permanently
+    void saveToFile() const {
+        ofstream file(filename);
+
+        if (!file) {
+            cerr << "\nError opening file for saving!\n";
+            return;
+        }
+
+        for (const auto& item : catalog) {
+            file << item->serialize() << '\n';
+        }
+
+        file.close();
+    }
+
+    // Load catalog from file
+    void loadFromFile() {
+        ifstream file(filename);
+
+        if (!file) {
+            cout << "\nNo existing library file found."
+                 << "\nStarting with an empty catalog.\n";
+            return;
+        }
+
+        string line;
+
+        while (getline(file, line)) {
+            if (line.empty()) {
+                continue;
+            }
+
+            stringstream ss(line);
+
+            string type, title, publisher, borrower;
+            string field;
+
+            int id;
+            int status;
+            long long checkoutTimestamp;
+
+            getline(ss, type, '|');
+
+            getline(ss, field, '|');
+            try {
+                size_t pos;
+                id = stoi(field, &pos);
+                if (pos != field.size()) continue;
+            } catch (...) {
+                continue;
+            }
+
+            getline(ss, title, '|');
+            getline(ss, publisher, '|');
+
+            unique_ptr<MediaItem> item = nullptr;
+
+            if (type == "BOOK") {
+                string author, isbn;
+
+                getline(ss, author, '|');
+                getline(ss, isbn, '|');
+
+                item = make_unique<Book>(
+                    id, title, publisher, author, isbn
+                );
+
+            } else if (type == "JOURNAL") {
+                int volume, issue;
+
+                getline(ss, field, '|');
+                try {
+                    volume = stoi(field);
+                } catch (...) {
+                    continue;
+                }
+
+                getline(ss, field, '|');
+                try {
+                    issue = stoi(field);
+                } catch (...) {
+                    continue;
+                }
+
+                item = make_unique<Journal>(
+                    id, title, publisher, volume, issue
+                );
+            } else {
+                continue;
+            }
+
+            getline(ss, field, '|');
+            try {
+                status = stoi(field);
+            } catch (...) {
+                continue;
+            }
+
+            getline(ss, borrower, '|');
+
+            getline(ss, field);
+            try {
+                checkoutTimestamp = stoll(field);
+            } catch (...) {
+                continue;
+            }
+
+            if (status != 0 && status != 1) {
+                continue;
+            }
+
+            item->restoreCheckout(
+                status == 1,
+                borrower,
+                static_cast<time_t>(checkoutTimestamp)
+            );
+
+            // Prevent duplicate IDs in the loaded catalog
+            bool duplicate = false;
+
+            for (const auto& existing : catalog) {
+                if (existing->getId() == id) {
+                    duplicate = true;
+                    break;
+                }
+            }
+
+            if (!duplicate) {
+                catalog.push_back(move(item));
+            }
+        }
+
+        file.close();
+
+        cout << "\nLibrary data loaded successfully!\n";
+    }
+
+    // Main menu
+    void menu() {
+        int choice;
+
+        do {
+            cout << "\n\n";
+            cout << "====================================\n";
+            cout << "       LIBRARY MANAGEMENT SYSTEM    \n";
+            cout << "====================================\n";
+
+            cout << "1. Add Book\n";
+            cout << "2. Add Journal\n";
+            cout << "3. Display All Media\n";
+            cout << "4. Search Media\n";
+            cout << "5. Checkout Media\n";
+            cout << "6. Return Media\n";
+            cout << "7. Calculate Overdue Fine\n";
+            cout << "8. Save Library Data\n";
+            cout << "9. Exit\n";
+
+            cout << "====================================\n";
+            cout << "Enter your choice: ";
+
+            if (!(cin >> choice)) {
+                cin.clear();
+                cin.ignore(
+                    numeric_limits<streamsize>::max(), '\n'
+                );
+                cout << "\nInvalid input!\n";
+                continue;
+            }
+
+            switch (choice) {
+                case 1:
+                    addBook();
+                    break;
+
+                case 2:
+                    addJournal();
+                    break;
+
+                case 3:
+                    displayAll();
+                    break;
+
+                case 4:
+                    searchItem();
+                    break;
+
+                case 5:
+                    checkoutItem();
+                    break;
+
+                case 6:
+                    returnItem();
+                    break;
+
+                case 7:
+                    showFine();
+                    break;
+
+                case 8:
+                    saveToFile();
+                    cout << "\nData saved successfully!\n";
+                    break;
+
+                case 9:
+                    saveToFile();
+                    cout << "\nThank you for using the system!\n";
+                    break;
+
+                default:
+                    cout << "\nInvalid choice!\n";
+            }
+
+        } while (choice != 9);
+    }
+};
+
+// ==========================================
+// MAIN FUNCTION
+// ==========================================
+
+int main() {
+    Library library;
+
+    cout << "Loading Library Database...\n";
+
+    library.loadFromFile();
+
+    library.menu();
+
+    return 0;
+}
